@@ -1,0 +1,221 @@
+from picamera import PiCamera
+from time import sleep
+import RPi.GPIO as GPIO
+import matplotlib.pyplot as plt
+import cv2
+import numpy as np
+import time
+import datetime
+import serial
+import time
+ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
+cascade = cv2.CascadeClassifier('/home/pi/Desktop/cascade.xml')
+
+frame='/home/pi/Desktop/image12.jpg'
+
+camera = PiCamera()
+length=320
+width=320
+camera.resolution = (length, width)
+camera.brightness = 50
+camera.contrast = 50
+
+camera.saturation = 50
+#camera.framerate = 100
+color = (0, 255, 0)
+thickness = 2
+threshvalue=210
+threshmaxvalue = 255
+threshold_type = cv2.THRESH_BINARY
+histogramlane = [0] * 320
+pts = np.array([[45,280],[20,300],[285,280],[305,300]], np.int32)
+pts_stop = np.array([[160,0],[160,320],[320,0],[320,320]], np.int32)
+def image_capture():
+    camera.start_preview()
+    camera.capture(frame)
+    camera.stop_preview()
+def calculate_fps(start,end):
+    elapsed_time = end - start
+    return 1/elapsed_time
+ser.flush()
+while True:
+    start_time = time.time()
+    image_capture()
+    end_time = time.time()
+    fps=calculate_fps(start_time,end_time)
+    print("FBS : ",fps)
+    image = cv2.imread(frame)
+    image = cv2.resize(image, (width,length))
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    gray_image = cv2.cvtColor(image_rgb, cv2.COLOR_BGR2GRAY)
+    #image_stop = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    
+    cv2.line(image, tuple(pts[0]), tuple(pts[1]), (0, 255, 0), 2)
+    cv2.line(image, tuple(pts[1]), tuple(pts[3]), (0, 255, 0), 2)
+    cv2.line(image, tuple(pts[2]), tuple(pts[0]), (0, 255, 0), 2)
+    cv2.line(image, tuple(pts[3]), tuple(pts[2]), (0, 255, 0), 2)
+    
+    x,y,w,h = cv2.boundingRect(pts)
+    roi = gray_image[y:y+h, x:x+w]
+    
+    #this section for stop sign detection
+    d=0
+    x2,y2,w2,h2 = cv2.boundingRect(pts_stop)
+    roi_stop = image[y2:y2+h2, x2:x2+w2]
+    gray_stop = cv2.cvtColor(roi_stop, cv2.COLOR_BGR2GRAY)
+    stop_sign = cascade.detectMultiScale(gray_stop, scaleFactor=1.1, minNeighbors=4)
+    for (x, y, w, h) in stop_sign:
+        cv2.rectangle(roi_stop, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        d=((x+w)-x)*(-0.90)+75.4
+    text="d:"+str(d)    
+        
+    cv2.putText(roi_stop,text,(10,100),cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+    cv2.imshow("final stop",roi_stop)
+     
+    ret, threshold = cv2.threshold(gray_image, threshvalue, threshmaxvalue, cv2.THRESH_BINARY)
+    resized_roi = cv2.resize(roi, (length,width))
+    
+    edges = cv2.Canny(roi,100, 500)
+    
+    x,y,w,h = cv2.boundingRect(pts)
+    threshold_image_roi = threshold[y:y+h, x:x+w]
+    resized_threshold = cv2.resize(threshold_image_roi, (length,width))
+    #cv2.imshow("final stop",gray_stop)
+    merged_image = cv2.addWeighted(edges, 0.5,threshold_image_roi, 0.5, 0)
+    resized_merged_image = cv2.resize(merged_image, (length,width))
+    
+    
+    
+    histogram=[]
+    histogram=np.zeros(histogram)
+    histogram.resize(320)
+    for i in range(0,320):
+        for j in range(220,320):
+            histogram[i] += resized_merged_image[j][i]
+    print(histogram)
+    print(len(histogram))
+    
+    maxleft=0
+    leftlane=0
+    for i in range(0,160):
+        if(maxleft<histogram[i]):
+            maxleft=histogram[i]
+            leftlane=i
+    maxright=0
+    rightlane=0
+    for i in range(160,320):
+        if(maxright<histogram[i]):
+            maxright=histogram[i]
+            rightlane=i
+    cv2.line(resized_roi, (leftlane,0),(leftlane, 360), (0, 255, 0), 2)
+    cv2.line(resized_roi, (rightlane,0),(rightlane, 360), (0, 255, 0), 2)
+    
+    if(rightlane==0):rightlane=320
+    midlane=((rightlane-leftlane)/2)+leftlane
+    
+    print("left:",leftlane)
+    print("right",rightlane)
+    print("midlane:",midlane)
+    midlineshow=cv2.line(threshold,((int)(midlane), 0),((int)(midlane),400),(0, 255, 0),thickness = 1)
+
+    #cv2.imshow("midlane",midlineshow)
+
+    decisionvar=160
+    result=decisionvar-midlane
+    cv2.line(resized_roi, (int(midlane),0),(int(midlane), 360), (255, 0, 0), 2)
+    cv2.line(resized_roi, (int(decisionvar),0),(int(decisionvar), 360), (0, 255, 0), 2)
+    cv2.imshow("ROI", resized_roi)
+
+    #if(result>0):
+        #print("Go Left by ",result)
+    #elif(result==0):
+        #print("Perfect!")
+    #else:
+        #print("Go Right by ",result*-1)
+    text="result :"+str(result)    
+        
+    cv2.putText(image,text,(10,300),cv2.FONT_HERSHEY_SIMPLEX,1,(0,255,0),2)
+    cv2.imshow("orignal", image)
+    if d>10 and d<=30:
+        #GPIO.output(21, GPIO.LOW)
+        #GPIO.output(22, GPIO.LOW)
+        #GPIO.output(23, GPIO.HIGH)
+        #GPIO.output(24, GPIO.LOW)
+        #print("LEFT1")
+        ser.write(str(7).encode('utf-8'))
+        time.sleep(0.5)
+        receive_string = ser.readline().decode('utf-8', 'replace').rstrip()
+        print(receive_string)
+    
+    if result in range(-10,10):
+        #GPIO.output(21, GPIO.LOW)
+        #GPIO.output(22, GPIO.LOW)
+        #GPIO.output(23, GPIO.LOW)
+        #GPIO.output(24, GPIO.LOW)
+        #print("forward")
+        ser.write(str(0).encode('utf-8'))
+        time.sleep(0.5)
+        receive_string = ser.readline().decode('utf-8', 'replace').rstrip()
+        print(receive_string)
+    elif result<-10 :
+        #GPIO.output(21, GPIO.HIGH)
+        #GPIO.output(22, GPIO.LOW)
+        #GPIO.output(23, GPIO.LOW)
+        #GPIO.output(24, GPIO.LOW)
+        #print("RIGHT1")
+        ser.write(str(1).encode('utf-8'))
+        time.sleep(0.5)
+        receive_string = ser.readline().decode('utf-8', 'replace').rstrip()
+        print(receive_string)
+    #elif result<=-20 and result>-30:
+        #GPIO.output(21, GPIO.LOW)
+        #GPIO.output(22, GPIO.HIGH)
+        #GPIO.output(23, GPIO.LOW)
+        #GPIO.output(24, GPIO.LOW)
+        #print("RIGHT2")
+    #elif result<-30 :
+        #GPIO.output(21, GPIO.HIGH)
+        #GPIO.output(22, GPIO.HIGH)
+        #GPIO.output(23, GPIO.LOW)
+        #GPIO.output(24, GPIO.LOW)
+        #print("RIGHT3")
+    elif result>10:
+        #GPIO.output(21, GPIO.LOW)
+        #GPIO.output(22, GPIO.LOW)
+        #GPIO.output(23, GPIO.HIGH)
+        #GPIO.output(24, GPIO.LOW)
+        #print("LEFT1")
+        ser.write(str(4).encode('utf-8'))
+        time.sleep(0.5)
+        receive_string = ser.readline().decode('utf-8', 'replace').rstrip()
+        print(receive_string)
+    #elif result>=20 and result<30:
+        #GPIO.output(21, GPIO.HIGH)
+        #GPIO.output(22, GPIO.LOW)
+        #GPIO.output(23, GPIO.HIGH)
+        #GPIO.output(24, GPIO.LOW)
+        #print("LEFT2")
+    #elif result>30 :
+        #GPIO.output(21, GPIO.LOW)
+        #GPIO.output(22, GPIO.HIGH)
+        #GPIO.output(23, GPIO.HIGH)
+        #GPIO.output(24, GPIO.LOW)
+        #print("LEFT3")
+        
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+        
+        
+        #cv2.waitKey(0)
+        #cv2.destroyAllWindows()
+
+        # Display the image
+
+        
+        
+
+
+
+ 
+
+    
